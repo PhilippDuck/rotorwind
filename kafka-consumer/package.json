@@ -1,0 +1,13 @@
+{
+  "name": "kafka-consumer",
+  "version": "1.0.0",
+  "description": "Kafka Consumer for random numbers",
+  "main": "consumer.js",
+  "scripts": {
+    "start": "node consumer.js"
+  },
+  "dependencies": {
+    "kafka-node": "^5.0.0",
+    "pg": "^8.7.1"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "kafka-producer",
+  "version": "1.0.0",
+  "description": "Kafka Producer sending random numbers",
+  "main": "producer.js",
+  "scripts": {
+    "start": "node producer.js"
+  },
+  "dependencies": {
+    "kafka-node": "^5.0.0"
+  }
+}
