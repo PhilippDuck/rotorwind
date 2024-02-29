@@ -1,68 +1,73 @@
-const kafka = require("kafka-node");
-const { Client } = require("pg");
+const { Kafka } = require("kafkajs");
+const { Pool } = require("pg");
 
-// Konfigurationsdetails für PostgreSQL
-const pgConfig = {
+const kafka = new Kafka({
+  clientId: "my-app",
+  brokers: ["kafka:9092"],
+});
+
+const consumer = kafka.consumer({ groupId: "test-group" });
+
+// PostgreSQL connection pool
+const pool = new Pool({
   user: "superset",
   host: "postgres",
   database: "superset",
   password: "superset",
   port: 5432,
+});
+
+const saveMessageToDatabase = async (message) => {
+  const client = await pool.connect();
+  try {
+    // Include the current timestamp using NOW()
+    await client.query(
+      "INSERT INTO messages(temperature, timestamp) VALUES($1, NOW())",
+      [message.value.toString()]
+    );
+    console.log("Message saved to database with timestamp");
+  } finally {
+    client.release();
+  }
 };
 
-const kafkaHost = "kafka:9092";
-const topic = "test";
+const run = async () => {
+  let connected = false;
+  const maxAttempts = 5;
+  let attempts = 0;
 
-// Verbindungsversuch zu PostgreSQL
-async function connectToPostgreSQL() {
-  const client = new Client(pgConfig);
-  try {
-    await client.connect();
-    console.log("Connected to PostgreSQL");
-    return client;
-  } catch (err) {
-    console.error("Failed to connect to PostgreSQL", err);
-    throw err; // Weitergeben des Fehlers, um den erneuten Versuch zu signalisieren
+  // Attempt to connect to Kafka with retries
+  while (!connected && attempts < maxAttempts) {
+    try {
+      await consumer.connect();
+      connected = true;
+    } catch (error) {
+      console.error("Connection failed, retrying...", error);
+      attempts++;
+      await new Promise((resolve) => setTimeout(resolve, 10000)); // Wait for 10 seconds
+    }
   }
-}
 
-// Hauptfunktion, die die Verbindung zu PostgreSQL und die Einrichtung des Kafka Consumers verwaltet
-async function main() {
-  let pgClient;
-  console.log("Versuche mit PostgreSQL zu verbinden.");
-
-  try {
-    pgClient = await connectToPostgreSQL();
-
-    const consumerClient = new kafka.KafkaClient({ kafkaHost });
-    const consumer = new kafka.Consumer(
-      consumerClient,
-      [{ topic, partition: 0 }],
-      { autoCommit: true }
-    );
-
-    consumer.on("message", async function (message) {
-      console.log("Message received:", message);
-      const queryText =
-        "INSERT INTO messages(text, timestamp) VALUES($1, $2) RETURNING *";
-      const values = [message.value, new Date()];
-
-      try {
-        const res = await pgClient.query(queryText, values);
-        console.log("Document inserted", res.rows[0]);
-      } catch (err) {
-        console.error("Failed to insert document into PostgreSQL", err);
-      }
-    });
-
-    consumer.on("error", function (err) {
-      console.error("Error:", err);
-    });
-  } catch (err) {
-    console.error("Ein unerwarteter Fehler ist aufgetreten", err);
+  if (!connected) {
+    console.error("Failed to connect to Kafka after multiple attempts");
+    return;
   }
-}
 
-main().catch((err) =>
-  console.error("Ein unerwarteter Fehler ist aufgetreten", err)
-);
+  // Subscribe and consume messages
+  await consumer.subscribe({ topic: "test", fromBeginning: true });
+
+  await consumer.run({
+    eachMessage: async ({ topic, partition, message }) => {
+      console.log({
+        partition,
+        offset: message.offset,
+        value: message.value.toString(),
+      });
+
+      // Save the message to the database with timestamp
+      await saveMessageToDatabase(message);
+    },
+  });
+};
+
+run().catch(console.error);
